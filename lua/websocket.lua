@@ -1,4 +1,5 @@
 local utils = require("utils")
+local io = require("io")
 
 local opcodes = {
         text = 1,

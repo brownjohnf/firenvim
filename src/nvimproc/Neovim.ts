@@ -87,6 +87,9 @@ export async function neovim(
     });
 
     const { 0: channel, 1: apiInfo } = (await request("nvim_get_api_info", [])) as INvimApiInfo;
+
+    stdout.setTypes(apiInfo.types);
+
     Object.assign(functions, apiInfo.functions
         .filter(f => f.deprecated_since === undefined)
         .reduce((acc, cur) => {

@@ -1,12 +1,13 @@
 import * as browser from "webextension-polyfill";
 import { neovim } from "./nvimproc/Neovim";
 import { page } from "./page/proxy";
-import { confReady, getConfForUrl } from "./utils/configuration";
+import { getGridId, selectWindow } from "./render/Redraw";
+import { confReady, getConfForUrl, getGlobalConf } from "./utils/configuration";
 import { addModifier, nonLiteralKeys, translateKey } from "./utils/keys";
 import { getCharSize, getGridSize, toFileName } from "./utils/utils";
 
 const locationPromise = page.getEditorLocation();
-const connectionPromise = browser.runtime.sendMessage({ funcName: ["getNewNeovimInstance"] });
+const connectionPromise = browser.runtime.sendMessage({ funcName: ["getNeovimInstance"] });
 const settingsPromise = browser.storage.local.get("globalSettings");
 
 window.addEventListener("load", async () => {
@@ -28,7 +29,7 @@ window.addEventListener("load", async () => {
         // info to be available when UIEnter is triggered
         const extInfo = browser.runtime.getManifest();
         const [major, minor, patch] = extInfo.version.split(".");
-        nvim.set_client_info(extInfo.name,
+        nvim.set_client_info(extInfo.name + Math.random(),
             { major, minor, patch },
             "ui",
             {},
@@ -36,9 +37,11 @@ window.addEventListener("load", async () => {
         );
 
         await confReady;
+        const persistent = getGlobalConf().server === "persistent";
         nvim.ui_attach(cols, rows, {
             ext_linegrid: true,
-            ext_messages: getConfForUrl(url).cmdline === "firenvim",
+            ext_messages: getConfForUrl(url).cmdline === "firenvim" || persistent,
+            ext_multigrid: persistent,
             rgb: true,
         });
         let resizeReqId = 0;
@@ -60,11 +63,16 @@ window.addEventListener("load", async () => {
                 const [cellWidth, cellHeight] = getCharSize(host);
                 const nCols = Math.floor(width / cellWidth);
                 const nRows = Math.floor(height / cellHeight);
-                nvim.ui_try_resize(nCols, nRows);
+                nvim.ui_try_resize_grid(getGridId(), nCols, nRows);
                 page.resizeEditor(selector, nCols * cellWidth, nRows * cellHeight);
             }
         });
 
+        if (persistent) {
+            await nvim
+                .open_win(0, true, { width: cols, height: rows, focusable: true, external: true })
+                .then(selectWindow);
+        }
         // Create file, set its content to the textarea's, write it
         const filename = toFileName(url, selector);
         Promise.all([nvim.command(`noswapfile edit ${filename}`), contentPromise])
@@ -93,7 +101,7 @@ window.addEventListener("load", async () => {
         window.addEventListener("click", setCurrentChan);
 
         // Ask for notifications when user writes/leaves firenvim
-        nvim.call_atomic((`augroup FirenvimAugroup
+        nvim.call_atomic((`augroup FirenvimAugroupChan${chan}
                         au!
                         autocmd BufWrite ${filename} `
                             + `call rpcnotify(${chan}, `
@@ -165,7 +173,7 @@ window.addEventListener("load", async () => {
             nvim.input_mouse(button,
                              action,
                              modifiers,
-                             0,
+                             getGridId(),
                              Math.floor(evt.pageY / cHeight),
                              Math.floor(evt.pageX / cWidth));
             keyHandler.focus();
